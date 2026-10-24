@@ -108,12 +108,25 @@ if [[ "$ENABLE_LVMS" == "yes" ]]; then
 
   git checkout "$LVMS_BRANCH"
 
-  # The upstream dev Dockerfile's runtime stage is fedora:latest. That floating tag now
-  # resolves to a Fedora whose xfsprogs defaults nrext64=1, and RHCOS kernels (5.14,
-  # xfsprogs 6.4) cannot mount such a filesystem -- volumes provision fine but every
-  # pod hangs on "Superblock has unknown incompatible features (0x80)". UBI9 carries
-  # the same xfsprogs build as the nodes, so format and mount agree. Dropping
-  # --noplugins lets dnf use the host's subscription entitlements to reach the RHEL repos.
+  # Building on UBI9 (below) needs this host's RHEL subscription entitlements, because
+  # the UBI repos do not carry xfsprogs. podman mounts /etc/pki/entitlement into the
+  # build automatically, so check for it here rather than failing deep inside dnf.
+  if ! compgen -G "/etc/pki/entitlement/*.pem" > /dev/null; then
+    echo "[ERROR] No RHEL entitlement certificates found in /etc/pki/entitlement."
+    echo "[ERROR] The LVMS image must be built on UBI9 so its xfsprogs matches RHCOS,"
+    echo "[ERROR] and the UBI repos do not ship xfsprogs, so an entitled build host"
+    echo "[ERROR] is required. Register this host (subscription-manager register) and retry."
+    exit 1
+  fi
+
+  # The upstream Dockerfile's runtime stage reads fedora:latest, but that line is a
+  # substitution sentinel: ci-operator rewrites it to ocp_<ver>_base-rhel9, and releases
+  # are built from release/operator/konflux.Dockerfile on ubi9-minimal. Only a local
+  # `make docker-build` materializes a real Fedora image, whose xfsprogs defaults
+  # nrext64=1. RHCOS (kernel 5.14, xfsprogs 6.4.0) cannot mount that, so volumes
+  # provision fine but every consuming pod hangs on
+  # "Superblock has unknown incompatible features (0x80)". Build on UBI9 to match the
+  # nodes, as production does. Dropping --noplugins lets dnf reach the RHEL repos.
   sed -i \
     -e 's|^FROM --platform=$TARGETPLATFORM fedora:latest|FROM --platform=$TARGETPLATFORM registry.access.redhat.com/ubi9/ubi:latest|' \
     -e 's|dnf install --nodocs --noplugins -y|dnf install --nodocs -y|' \
