@@ -142,7 +142,10 @@ if [[ "$ENABLE_LVMS" == "yes" ]]; then
 
   export IMAGE_REGISTRY=quay.io
   LVMS_VERSION=$(echo "$LVMS_BRANCH" | sed 's/release-//')
-  export IMAGE_TAG=${LVMS_VERSION}.1
+  # Unique per build. The operands run with imagePullPolicy IfNotPresent, so reusing a
+  # fixed tag leaves the nodes on whatever they cached earlier: a successful build and
+  # push still silently deploys the previous image.
+  export IMAGE_TAG="${LVMS_VERSION}.1-$(date -u +%Y%m%d%H%M%S)"
   export IMAGE_REPO=$IMAGE_REGISTRY/$REGISTRY_NAMESPACE/$REPOSITRY_NAME
   export IMG=$IMAGE_REPO:$IMAGE_TAG
 
