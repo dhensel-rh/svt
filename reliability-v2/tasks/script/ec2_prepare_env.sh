@@ -96,6 +96,9 @@ if [[ "$ENABLE_LVMS" == "yes" ]]; then
   git clone https://github.com/openshift/lvm-operator.git || true
   cd lvm-operator
   git fetch origin
+  # Discard the Dockerfile patch from any previous run so the branch checkout below
+  # is never blocked by local modifications.
+  git checkout -- Dockerfile 2>/dev/null || true
 
   if ! git rev-parse --verify "origin/${LVMS_BRANCH}" &>/dev/null; then
     LVMS_BRANCH=$(git branch -r | grep -oP 'origin/release-\d+\.\d+$' | sort -t. -k1,1n -k2,2n | tail -1 | sed 's|origin/||')
@@ -104,6 +107,25 @@ if [[ "$ENABLE_LVMS" == "yes" ]]; then
   echo "[INFO] OCP version: ${OCP_VERSION}, LVMS branch: ${LVMS_BRANCH}"
 
   git checkout "$LVMS_BRANCH"
+
+  # The upstream dev Dockerfile's runtime stage is fedora:latest. That floating tag now
+  # resolves to a Fedora whose xfsprogs defaults nrext64=1, and RHCOS kernels (5.14,
+  # xfsprogs 6.4) cannot mount such a filesystem -- volumes provision fine but every
+  # pod hangs on "Superblock has unknown incompatible features (0x80)". UBI9 carries
+  # the same xfsprogs build as the nodes, so format and mount agree. Dropping
+  # --noplugins lets dnf use the host's subscription entitlements to reach the RHEL repos.
+  sed -i \
+    -e 's|^FROM --platform=$TARGETPLATFORM fedora:latest|FROM --platform=$TARGETPLATFORM registry.access.redhat.com/ubi9/ubi:latest|' \
+    -e 's|dnf install --nodocs --noplugins -y|dnf install --nodocs -y|' \
+    Dockerfile
+
+  if grep -q 'fedora:latest' Dockerfile; then
+    echo "[ERROR] Could not repoint the Dockerfile runtime stage to UBI9."
+    echo "[ERROR] Refusing to build an image that formats XFS volumes RHCOS cannot mount."
+    grep -n '^FROM' Dockerfile
+    exit 1
+  fi
+  echo "[INFO] Dockerfile runtime stage repointed to UBI9 (xfsprogs matching RHCOS)."
 
   export IMAGE_REGISTRY=quay.io
   LVMS_VERSION=$(echo "$LVMS_BRANCH" | sed 's/release-//')
