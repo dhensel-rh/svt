@@ -236,12 +236,17 @@ LCEOF
     exit 1
   fi
 
-  echo "[INFO] Waiting for pods in $LVMS_NAMESPACE to be ready..."
-  if ! oc wait --for=condition=Ready pods --all -n $LVMS_NAMESPACE --timeout=120s; then
-    echo "[ERROR] Some pods in $LVMS_NAMESPACE are not ready:"
-    oc get pods -n $LVMS_NAMESPACE
-    exit 1
-  fi
+  # Wait on the rollouts rather than `oc wait pods --all`: every run deploys a new image
+  # tag, so pods are always being replaced here, and `--all` resolves the pod list up
+  # front and then fails with NotFound when the old pod it is watching goes away.
+  echo "[INFO] Waiting for LVMS rollouts to complete..."
+  for workload in deploy/lvms-operator ds/vg-manager; do
+    if ! oc rollout status "$workload" -n $LVMS_NAMESPACE --timeout=180s; then
+      echo "[ERROR] $workload did not roll out successfully:"
+      oc get pods -n $LVMS_NAMESPACE
+      exit 1
+    fi
+  done
 
   echo "[SUCCESS] LVMS deployed and all pods are running."
 fi
